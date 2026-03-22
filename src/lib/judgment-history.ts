@@ -1,4 +1,6 @@
 const STORAGE_KEY = "malzip-judgment-history-v2";
+/** 정규화 검색어 → 누적 검색(판독 완료) 횟수 */
+const SEARCH_COUNT_KEY = "malzip-search-counts-v1";
 /** 이전 버전 키 — 마이그레이션 시 한 번 제거해 로컬 JSON을 비운다 */
 const LEGACY_STORAGE_KEYS = ["malzip-judgment-history-v1"] as const;
 const MAX_ENTRIES = 80;
@@ -15,11 +17,16 @@ function purgeLegacyStorageKeys(): void {
 
 export type JudgmentRecord = {
   id: string;
+  /** 사용자가 검색에 입력한 문자열(캐시 키) */
   restaurantName: string;
+  /** 결과·공유에 쓸 정식 상호. 없으면 restaurantName 표시 */
+  displayName?: string;
   probability: number;
   createdAt: string;
   /** 예: 서울 강남 — 구버전 이력에는 없을 수 있음 */
   location?: string;
+  /** 읍·면·동(목동 등). 구 이력에는 없을 수 있음 */
+  dong?: string;
   /** 예: 한식당, 오마카세 전문점 */
   venueType?: string;
   /** false면 식당 미식별(구 이력은 없으면 true로 간주) */
@@ -39,7 +46,11 @@ function isRecord(x: unknown): x is JudgmentRecord {
   ) {
     return false;
   }
+  if (o.displayName !== undefined && typeof o.displayName !== "string") {
+    return false;
+  }
   if (o.location !== undefined && typeof o.location !== "string") return false;
+  if (o.dong !== undefined && typeof o.dong !== "string") return false;
   if (o.venueType !== undefined && typeof o.venueType !== "string") {
     return false;
   }
@@ -56,6 +67,52 @@ export function recordIsFound(r: JudgmentRecord): boolean {
 /** 비교용: 앞뒤 공백·연속 공백 정리, 라틴 문자는 소문자 통일 */
 export function normalizeSearchKey(raw: string): string {
   return raw.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function loadSearchCountMap(): Record<string, number> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(SEARCH_COUNT_KEY);
+    if (!raw) return {};
+    const data = JSON.parse(raw) as unknown;
+    if (!data || typeof data !== "object") return {};
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(data as Record<string, unknown>)) {
+      if (typeof v === "number" && Number.isFinite(v) && v >= 0) {
+        out[k] = Math.min(1_000_000, Math.floor(v));
+      }
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function saveSearchCountMap(map: Record<string, number>): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(SEARCH_COUNT_KEY, JSON.stringify(map));
+}
+
+/** 정규화 검색어 기준 누적 검색 횟수 (판독이 끝날 때마다 +1) */
+export function getSearchCount(searchName: string): number {
+  const key = normalizeSearchKey(searchName);
+  if (!key) return 0;
+  return loadSearchCountMap()[key] ?? 0;
+}
+
+/**
+ * 판독이 완료될 때 호출(캐시 히트·미식별·확률 산출 완료).
+ * 반환: 갱신 후 해당 검색어 횟수
+ */
+export function incrementSearchCount(searchName: string): number {
+  if (typeof window === "undefined") return 0;
+  const key = normalizeSearchKey(searchName);
+  if (!key) return 0;
+  const map = loadSearchCountMap();
+  const next = (map[key] ?? 0) + 1;
+  map[key] = next;
+  saveSearchCountMap(map);
+  return next;
 }
 
 /**

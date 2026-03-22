@@ -6,6 +6,8 @@ import { DEFAULT_NOT_FOUND_MESSAGE } from "@/lib/analysis";
 import {
   appendJudgment,
   findCachedJudgment,
+  getSearchCount,
+  incrementSearchCount,
   loadJudgmentHistory,
   newJudgmentId,
   recordIsFound,
@@ -33,11 +35,35 @@ function topicParticle(name: string): "은" | "는" {
   return "는";
 }
 
+/** 시·구 + (선택) 동 → 「○○ ○○동에 위치한」 / 동 없으면 「○○에 위치한」 */
+function formatWherePrefix(
+  location: string | null | undefined,
+  dong: string | null | undefined,
+): string | null {
+  const loc = location?.trim() ?? "";
+  const d = dong?.trim() ?? "";
+  if (!loc || loc === "-") return null;
+  if (!d || d === "-") return `${loc}에 위치한`;
+  return `${loc} ${d}에 위치한`;
+}
+
+/** 결과 문장·공유에 쓸 가게 이름(정식 상호 우선) */
+function venueDisplayLabel(
+  searchName: string,
+  displayName: string | null | undefined,
+): string {
+  const d = displayName?.trim();
+  if (d && d !== "-") return d;
+  return searchName;
+}
+
 function buildJudgmentShareText(payload: {
   restaurantName: string;
+  displayName?: string | null;
   exists?: boolean;
   probability: number;
   location?: string | null;
+  dong?: string | null;
   venueType?: string | null;
   notice?: string | null;
 }): string {
@@ -47,18 +73,20 @@ function buildJudgmentShareText(payload: {
       payload.notice?.trim() || DEFAULT_NOT_FOUND_MESSAGE;
     return `「${place}」 ${msg}`;
   }
-  const loc = payload.location?.trim();
   const vt = payload.venueType?.trim();
-  if (loc && vt && loc !== "-" && vt !== "-") {
-    return `${loc}에 위치한 ${vt}인 ${place}${topicParticle(place)} 맛집일 확률 ${prob}%입니다`;
+  const where = formatWherePrefix(payload.location, payload.dong);
+  const venue = venueDisplayLabel(place, payload.displayName);
+  if (where && vt && vt !== "-") {
+    return `${where} ${vt}인 ${venue}${topicParticle(venue)} 맛집일 확률 ${prob}%입니다`;
   }
-  return `${place}${topicParticle(place)} 맛집일 확률 ${prob}%입니다`;
+  return `${venue}${topicParticle(venue)} 맛집일 확률 ${prob}%입니다`;
 }
 
 function JudgmentResultBlock({
   name,
   probability,
   location,
+  dong,
   venueType,
   titleId,
   TitleTag = "h2",
@@ -66,14 +94,15 @@ function JudgmentResultBlock({
   name: string;
   probability: number;
   location?: string | null;
+  dong?: string | null;
   venueType?: string | null;
   titleId?: string;
   TitleTag?: "h2" | "h3";
 }) {
   const Tag = TitleTag;
-  const loc = location?.trim();
   const vt = venueType?.trim();
-  const rich = !!(loc && vt && loc !== "-" && vt !== "-");
+  const where = formatWherePrefix(location, dong);
+  const rich = !!(where && vt && vt !== "-");
   const idProps = titleId ? { id: titleId } : {};
 
   if (rich) {
@@ -83,7 +112,7 @@ function JudgmentResultBlock({
         className="text-xl font-semibold leading-relaxed text-slate-900 md:text-2xl"
       >
         <span className="block text-base font-normal text-slate-600 md:text-lg">
-          {loc}에 위치한 {vt}인
+          {where} {vt}인
         </span>
         <span className="mt-3 block">
           <span className="text-blue-900">{name}</span>
@@ -177,6 +206,11 @@ export default function Home() {
   const [analyzing, setAnalyzing] = useState(false);
   const [probability, setProbability] = useState<number | null>(null);
   const [resultLocation, setResultLocation] = useState<string | null>(null);
+  const [resultDong, setResultDong] = useState<string | null>(null);
+  /** 맛집 문장에 쓸 정식 상호. 없으면 submittedName */
+  const [resultDisplayName, setResultDisplayName] = useState<string | null>(
+    null,
+  );
   const [resultVenueType, setResultVenueType] = useState<string | null>(null);
   const [resultFound, setResultFound] = useState(true);
   const [resultNotice, setResultNotice] = useState("");
@@ -190,13 +224,19 @@ export default function Home() {
   const [pending, setPending] = useState<null | {
     originalQuery: string;
     suggestedLocation: string;
+    suggestedDong: string;
     suggestedVenueType: string;
+    suggestedDisplayName: string;
     step: "confirm" | "refine";
   }>(null);
   const [refineDraft, setRefineDraft] = useState("");
-  const [historySort, setHistorySort] = useState<"recent" | "probability">(
-    "recent",
-  );
+  const [historySort, setHistorySort] = useState<
+    "recent" | "probability" | "searchCount"
+  >("recent");
+  /** 검색 횟수 갱신 후 정렬·표시용 */
+  const [searchCountTick, setSearchCountTick] = useState(0);
+
+  const bumpSearchMetrics = () => setSearchCountTick((t) => t + 1);
 
   const displayHistory = useMemo(() => {
     const copy = [...history];
@@ -205,6 +245,17 @@ export default function Home() {
         (a, b) =>
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
       );
+      return copy;
+    }
+    if (historySort === "searchCount") {
+      copy.sort((a, b) => {
+        const ca = getSearchCount(a.restaurantName);
+        const cb = getSearchCount(b.restaurantName);
+        if (cb !== ca) return cb - ca;
+        return (
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+      });
       return copy;
     }
     copy.sort((a, b) => {
@@ -217,7 +268,7 @@ export default function Home() {
       );
     });
     return copy;
-  }, [history, historySort]);
+  }, [history, historySort, searchCountTick]);
 
   useEffect(() => {
     setCanNativeShare(typeof navigator !== "undefined" && !!navigator.share);
@@ -231,7 +282,9 @@ export default function Home() {
     originalQuery: string,
     scoreContext: {
       confirmedLocation: string;
+      confirmedDong: string;
       confirmedVenueType: string;
+      confirmedDisplayName: string;
       userAddedLocationNote?: string;
     },
   ) {
@@ -254,7 +307,9 @@ export default function Home() {
         exists?: boolean;
         probability?: number;
         location?: string;
+        dong?: string;
         venueType?: string;
+        displayName?: string;
         notice?: string;
         error?: string;
       };
@@ -268,7 +323,9 @@ export default function Home() {
         typeof data.probability !== "number" ||
         !Number.isFinite(data.probability) ||
         typeof data.location !== "string" ||
+        typeof data.dong !== "string" ||
         typeof data.venueType !== "string" ||
+        typeof data.displayName !== "string" ||
         typeof data.notice !== "string"
       ) {
         throw new Error("서버 응답 형식이 올바르지 않습니다.");
@@ -276,24 +333,37 @@ export default function Home() {
       const exists = data.exists;
       const prob = Math.min(100, Math.max(0, Math.round(data.probability)));
       const loc = data.location.trim();
+      const dong = data.dong.trim();
       const vt = data.venueType.trim();
+      const disp = data.displayName.trim();
       const notice = data.notice.trim();
+
+      incrementSearchCount(originalQuery);
+      bumpSearchMetrics();
 
       setSubmittedName(originalQuery);
       setResultFound(exists);
       setResultNotice(exists ? "" : (notice || DEFAULT_NOT_FOUND_MESSAGE));
       setProbability(prob);
       setResultLocation(exists ? (loc || null) : null);
+      setResultDong(exists && dong && dong !== "-" ? dong : null);
+      setResultDisplayName(
+        exists && disp && disp !== "-" ? disp : null,
+      );
       setResultVenueType(exists ? (vt || null) : null);
 
       const record: JudgmentRecord = {
         id: newJudgmentId(),
         restaurantName: originalQuery,
+        displayName:
+          exists && disp && disp !== "-" ? disp : undefined,
         probability: prob,
         createdAt: new Date().toISOString(),
         exists,
         notice: exists ? undefined : (notice || DEFAULT_NOT_FOUND_MESSAGE),
         location: exists ? (loc || undefined) : undefined,
+        dong:
+          exists && dong && dong !== "-" ? dong : undefined,
         venueType: exists ? (vt || undefined) : undefined,
       };
       setHistory(appendJudgment(record));
@@ -316,9 +386,13 @@ export default function Home() {
 
     const cached = findCachedJudgment(name);
     if (cached) {
+      incrementSearchCount(name);
+      bumpSearchMetrics();
       setSubmittedName(name);
       setProbability(cached.probability);
       setResultLocation(cached.location ?? null);
+      setResultDong(cached.dong ?? null);
+      setResultDisplayName(cached.displayName ?? null);
       setResultVenueType(cached.venueType ?? null);
       const found = recordIsFound(cached);
       setResultFound(found);
@@ -336,6 +410,8 @@ export default function Home() {
     setAnalyzing(true);
     setProbability(null);
     setResultLocation(null);
+    setResultDong(null);
+    setResultDisplayName(null);
     setResultVenueType(null);
     setResultFound(true);
     setResultNotice("");
@@ -350,7 +426,9 @@ export default function Home() {
         phase?: string;
         exists?: boolean;
         location?: string;
+        dong?: string;
         venueType?: string;
+        displayName?: string;
         notice?: string;
         error?: string;
       };
@@ -362,7 +440,9 @@ export default function Home() {
       if (
         typeof data.exists !== "boolean" ||
         typeof data.location !== "string" ||
+        typeof data.dong !== "string" ||
         typeof data.venueType !== "string" ||
+        typeof data.displayName !== "string" ||
         typeof data.notice !== "string"
       ) {
         throw new Error("서버 응답 형식이 올바르지 않습니다.");
@@ -370,10 +450,14 @@ export default function Home() {
 
       if (!data.exists) {
         const notice = data.notice.trim() || DEFAULT_NOT_FOUND_MESSAGE;
+        incrementSearchCount(name);
+        bumpSearchMetrics();
         setResultFound(false);
         setResultNotice(notice);
         setProbability(0);
         setResultLocation(null);
+        setResultDong(null);
+        setResultDisplayName(null);
         setResultVenueType(null);
         const record: JudgmentRecord = {
           id: newJudgmentId(),
@@ -388,10 +472,13 @@ export default function Home() {
         return;
       }
 
+      const suggestedDisp = data.displayName.trim();
       setPending({
         originalQuery: name,
         suggestedLocation: data.location.trim() || "지역 미상",
+        suggestedDong: data.dong.trim(),
         suggestedVenueType: data.venueType.trim() || "음식점",
+        suggestedDisplayName: suggestedDisp || name,
         step: "confirm",
       });
     } catch (err) {
@@ -403,9 +490,11 @@ export default function Home() {
 
   async function handleShare(payload: {
     restaurantName: string;
+    displayName?: string | null;
     exists?: boolean;
     probability: number;
     location?: string | null;
+    dong?: string | null;
     venueType?: string | null;
     notice?: string | null;
   }) {
@@ -478,8 +567,9 @@ export default function Home() {
               위치·업종 확인
             </h2>
             <p className="mt-2 text-xs text-slate-500 sm:text-sm">
-              위치는 <span className="font-medium text-slate-600">시·구(또는 시·군)</span>
-              까지 추정했어요. 다르면 「아니에요」로 알려 주세요.
+              위치는 <span className="font-medium text-slate-600">시·구</span>와, 알려진 경우{" "}
+              <span className="font-medium text-slate-600">동(읍·면)</span>까지 추정했어요. 다르면
+              「아니에요」로 알려 주세요.
             </p>
             <p className="mt-3 text-base text-slate-600">
               <span className="font-medium text-slate-800">
@@ -487,7 +577,12 @@ export default function Home() {
               </span>
             </p>
             <p className="mt-4 text-lg font-medium leading-relaxed text-slate-900">
-              <span className="text-blue-900">{pending.suggestedLocation}</span>에 위치한{" "}
+              <span className="text-blue-900">
+                {formatWherePrefix(
+                  pending.suggestedLocation,
+                  pending.suggestedDong,
+                ) ?? `${pending.suggestedLocation}에 위치한`}
+              </span>{" "}
               <span className="text-blue-900">{pending.suggestedVenueType}</span>
               이 맞습니까?
             </p>
@@ -498,7 +593,9 @@ export default function Home() {
                 onClick={() =>
                   void runScorePhase(pending.originalQuery, {
                     confirmedLocation: pending.suggestedLocation,
+                    confirmedDong: pending.suggestedDong,
                     confirmedVenueType: pending.suggestedVenueType,
+                    confirmedDisplayName: pending.suggestedDisplayName,
                   })
                 }
               >
@@ -530,13 +627,13 @@ export default function Home() {
               위치 보정
             </h2>
             <p className="mt-3 text-lg font-medium text-slate-900">
-              음식점이 있는 곳을 시·구까지 알려주세요
+              대략적인 위치를 알려주세요
             </p>
             <p className="mt-2 text-sm text-slate-600">
               예: 대전 유성구, 서울 마포구 연남동 — 시·구(또는 시·군)와 동·도로명을 함께 적으면 더 정확해요.
             </p>
             <label htmlFor="refine-location" className="sr-only">
-              음식점 위치
+              대략적인 위치
             </label>
             <textarea
               id="refine-location"
@@ -561,7 +658,9 @@ export default function Home() {
                 }
                 void runScorePhase(pending.originalQuery, {
                   confirmedLocation: pending.suggestedLocation,
+                  confirmedDong: pending.suggestedDong,
                   confirmedVenueType: pending.suggestedVenueType,
+                  confirmedDisplayName: pending.suggestedDisplayName,
                   userAddedLocationNote: note,
                 });
               }}
@@ -590,9 +689,10 @@ export default function Home() {
             <article className="mx-auto w-full max-w-xl rounded-2xl border border-slate-200/80 bg-gradient-to-br from-blue-50/90 to-white p-8 text-center shadow-sm">
               {resultFound ? (
                 <JudgmentResultBlock
-                  name={submittedName}
+                  name={venueDisplayLabel(submittedName, resultDisplayName)}
                   probability={probability}
                   location={resultLocation}
+                  dong={resultDong}
                   venueType={resultVenueType}
                   titleId="probability-section-title"
                   TitleTag="h2"
@@ -605,15 +705,24 @@ export default function Home() {
                   TitleTag="h2"
                 />
               )}
+              <p className="mx-auto mt-4 max-w-md text-center text-xs text-slate-500">
+                같은 검색어로{" "}
+                <span className="font-semibold tabular-nums text-slate-600">
+                  {getSearchCount(submittedName)}
+                </span>
+                번 검색했어요
+              </p>
               {canNativeShare && (
                 <button
                   type="button"
                   onClick={() =>
                     void handleShare({
                       restaurantName: submittedName,
+                      displayName: resultDisplayName,
                       exists: resultFound,
                       probability,
                       location: resultLocation,
+                      dong: resultDong,
                       venueType: resultVenueType,
                       notice: resultFound ? null : resultNotice,
                     })
@@ -658,14 +767,14 @@ export default function Home() {
                 이전 판독
               </h3>
               <div
-                className="flex shrink-0 gap-0.5 rounded-xl border border-slate-200 bg-slate-100/80 p-1"
+                className="flex max-w-full shrink-0 flex-wrap justify-end gap-0.5 rounded-xl border border-slate-200 bg-slate-100/80 p-1"
                 role="group"
                 aria-label="이전 판독 정렬"
               >
                 <button
                   type="button"
                   onClick={() => setHistorySort("recent")}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition sm:text-sm ${
+                  className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition sm:px-3 sm:text-sm ${
                     historySort === "recent"
                       ? "bg-white text-blue-800 shadow-sm ring-1 ring-slate-200/80"
                       : "text-slate-600 hover:bg-white/70 hover:text-slate-900"
@@ -676,13 +785,24 @@ export default function Home() {
                 <button
                   type="button"
                   onClick={() => setHistorySort("probability")}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium transition sm:text-sm ${
+                  className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition sm:px-3 sm:text-sm ${
                     historySort === "probability"
                       ? "bg-white text-blue-800 shadow-sm ring-1 ring-slate-200/80"
                       : "text-slate-600 hover:bg-white/70 hover:text-slate-900"
                   }`}
                 >
                   맛집 확률 높은순
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHistorySort("searchCount")}
+                  className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition sm:px-3 sm:text-sm ${
+                    historySort === "searchCount"
+                      ? "bg-white text-blue-800 shadow-sm ring-1 ring-slate-200/80"
+                      : "text-slate-600 hover:bg-white/70 hover:text-slate-900"
+                  }`}
+                >
+                  검색 많은순
                 </button>
               </div>
             </div>
@@ -703,7 +823,13 @@ export default function Home() {
                       aria-expanded={open}
                     >
                       <span className="min-w-0 flex-1 font-medium text-slate-900">
-                        {r.restaurantName}
+                        {venueDisplayLabel(r.restaurantName, r.displayName)}
+                      </span>
+                      <span
+                        className="shrink-0 text-xs tabular-nums text-slate-500"
+                        title="같은 검색어 누적 검색 횟수"
+                      >
+                        {getSearchCount(r.restaurantName)}회
                       </span>
                       <time
                         className="shrink-0 text-xs text-slate-400 tabular-nums"
@@ -731,9 +857,13 @@ export default function Home() {
                       <div className="border-t border-slate-100 bg-slate-50/90 px-4 py-4 text-center">
                         {recordIsFound(r) ? (
                           <JudgmentResultBlock
-                            name={r.restaurantName}
+                            name={venueDisplayLabel(
+                              r.restaurantName,
+                              r.displayName,
+                            )}
                             probability={r.probability}
                             location={r.location}
+                            dong={r.dong}
                             venueType={r.venueType}
                             TitleTag="h3"
                           />
@@ -752,9 +882,11 @@ export default function Home() {
                             onClick={() =>
                               void handleShare({
                                 restaurantName: r.restaurantName,
+                                displayName: r.displayName,
                                 exists: recordIsFound(r),
                                 probability: r.probability,
                                 location: r.location,
+                                dong: r.dong,
                                 venueType: r.venueType,
                                 notice: recordIsFound(r)
                                   ? null

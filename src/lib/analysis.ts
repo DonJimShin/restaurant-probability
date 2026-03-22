@@ -3,7 +3,11 @@ export type JudgmentResultPayload = {
   exists: boolean;
   probability: number;
   location: string;
+  /** 읍·면·동(목동, 연남동 등). 불명이면 빈 문자열 */
+  dong: string;
   venueType: string;
+  /** 간판·알려진 정식 상호. 검색어가 줄임말이면 전체 상호 */
+  displayName: string;
   /** exists가 false일 때 사용자 안내 한 줄 (true면 빈 문자열) */
   notice: string;
 };
@@ -12,7 +16,9 @@ export type JudgmentResultPayload = {
 export type ConfirmResultPayload = {
   exists: boolean;
   location: string;
+  dong: string;
   venueType: string;
+  displayName: string;
   notice: string;
 };
 
@@ -44,15 +50,21 @@ export function normalizeJudgmentResult(raw: unknown): JudgmentResultPayload | n
 
   const locRaw =
     typeof o.location === "string" ? o.location.trim() : "";
+  const dongRaw =
+    typeof o.dong === "string" ? o.dong.trim() : "";
   const vtRaw =
     typeof o.venueType === "string" ? o.venueType.trim() : "";
+  const displayRaw =
+    typeof o.displayName === "string" ? o.displayName.trim() : "";
 
   if (!exists) {
     return {
       exists: false,
       probability: 0,
       location: "-",
+      dong: "-",
       venueType: "-",
+      displayName: "-",
       notice,
     };
   }
@@ -61,7 +73,9 @@ export function normalizeJudgmentResult(raw: unknown): JudgmentResultPayload | n
     exists: true,
     probability: Math.min(100, Math.max(0, prob)),
     location: locRaw || "지역 미상",
+    dong: dongRaw,
     venueType: vtRaw || "음식점",
+    displayName: displayRaw,
     notice: "",
   };
 }
@@ -82,14 +96,20 @@ export function normalizeConfirmResult(raw: unknown): ConfirmResultPayload | nul
 
   const locRaw =
     typeof o.location === "string" ? o.location.trim() : "";
+  const dongRaw =
+    typeof o.dong === "string" ? o.dong.trim() : "";
   const vtRaw =
     typeof o.venueType === "string" ? o.venueType.trim() : "";
+  const displayRaw =
+    typeof o.displayName === "string" ? o.displayName.trim() : "";
 
   if (!exists) {
     return {
       exists: false,
       location: "-",
+      dong: "-",
       venueType: "-",
+      displayName: "-",
       notice,
     };
   }
@@ -97,7 +117,9 @@ export function normalizeConfirmResult(raw: unknown): ConfirmResultPayload | nul
   return {
     exists: true,
     location: locRaw || "지역 미상",
+    dong: dongRaw,
     venueType: vtRaw || "음식점",
+    displayName: displayRaw,
     notice: "",
   };
 }
