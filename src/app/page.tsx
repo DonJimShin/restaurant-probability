@@ -23,11 +23,6 @@ function topicParticle(name: string): "은" | "는" {
   return "는";
 }
 
-function buildShareText(placeName: string, prob: number, pageUrl: string): string {
-  const line = `${placeName}${topicParticle(placeName)} 맛집일 확률 ${prob}%입니다`;
-  return `${line}\n\n맛집 확률 판독기${pageUrl ? `\n${pageUrl}` : ""}`;
-}
-
 function AnalyzingBlock() {
   const [idx, setIdx] = useState(0);
 
@@ -67,13 +62,11 @@ export default function Home() {
   const [analyzing, setAnalyzing] = useState(false);
   const [probability, setProbability] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [shareHint, setShareHint] = useState<string | null>(null);
+  const [canNativeShare, setCanNativeShare] = useState(false);
 
   useEffect(() => {
-    if (!shareHint) return;
-    const t = window.setTimeout(() => setShareHint(null), 2800);
-    return () => window.clearTimeout(t);
-  }, [shareHint]);
+    setCanNativeShare(typeof navigator !== "undefined" && !!navigator.share);
+  }, []);
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -109,34 +102,20 @@ export default function Home() {
   }
 
   async function handleShare() {
-    if (probability === null || !submittedName) return;
-    const url = typeof window !== "undefined" ? window.location.href : "";
-    const text = buildShareText(submittedName, probability, url);
-
-    if (typeof navigator !== "undefined" && navigator.share) {
-      try {
-        await navigator.share({
-          title: "맛집 확률 판독기",
-          text,
-        });
-        return;
-      } catch (e) {
-        if (
-          e &&
-          typeof e === "object" &&
-          "name" in e &&
-          (e as { name: string }).name === "AbortError"
-        ) {
-          return;
-        }
-      }
-    }
-
+    if (probability === null || !submittedName || !navigator.share) return;
+    const url = window.location.href;
+    const text = `${submittedName}${topicParticle(submittedName)} 맛집일 확률 ${probability}%입니다`;
     try {
-      await navigator.clipboard.writeText(text);
-      setShareHint("문구를 복사했어요");
-    } catch {
-      setShareHint("복사에 실패했어요. 브라우저 권한을 확인해 주세요.");
+      await navigator.share({ title: "맛집 확률", text, url });
+    } catch (e) {
+      if (
+        e &&
+        typeof e === "object" &&
+        "name" in e &&
+        (e as { name: string }).name === "AbortError"
+      ) {
+        return;
+      }
     }
   }
 
@@ -206,36 +185,30 @@ export default function Home() {
                 </span>
                 %입니다
               </h2>
-              <button
-                type="button"
-                onClick={() => void handleShare()}
-                className="mt-6 inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-5 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition hover:border-blue-400 hover:bg-blue-50/80 hover:text-blue-900"
-                aria-label="결과 공유하기"
-              >
-                <svg
-                  className="size-4 text-slate-500"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden
+              {canNativeShare && (
+                <button
+                  type="button"
+                  onClick={() => void handleShare()}
+                  className="mx-auto mt-5 inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition hover:border-blue-300 hover:bg-blue-50/60 hover:text-blue-800 active:bg-slate-50"
                 >
-                  <circle cx="18" cy="5" r="3" />
-                  <circle cx="6" cy="12" r="3" />
-                  <circle cx="18" cy="19" r="3" />
-                  <path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98" />
-                </svg>
-                공유
-              </button>
+                  <svg
+                    className="size-[1.125rem] shrink-0 text-slate-500"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden
+                  >
+                    <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+                    <polyline points="16 6 12 2 8 6" />
+                    <line x1="12" x2="12" y1="2" y2="15" />
+                  </svg>
+                  결과 공유하기
+                </button>
+              )}
             </article>
-
-            {shareHint && (
-              <p className="mt-2 text-center text-sm text-blue-800" role="status">
-                {shareHint}
-              </p>
-            )}
 
             <p className="mt-6 text-center text-xs text-slate-600">
               주의: 맛집 확인용으로만 사용하세요
