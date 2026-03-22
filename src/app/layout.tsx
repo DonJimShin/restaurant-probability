@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "맛집 확률 판독기",
+  title: "맛집 확률 계산기",
   description: "식당 이름으로 맛집일 확률을 살펴보는 데모 화면입니다.",
 };
 

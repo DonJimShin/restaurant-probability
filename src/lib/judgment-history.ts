@@ -1,5 +1,17 @@
-const STORAGE_KEY = "malzip-judgment-history-v1";
+const STORAGE_KEY = "malzip-judgment-history-v2";
+/** 이전 버전 키 — 마이그레이션 시 한 번 제거해 로컬 JSON을 비운다 */
+const LEGACY_STORAGE_KEYS = ["malzip-judgment-history-v1"] as const;
 const MAX_ENTRIES = 80;
+
+let legacyKeysPurged = false;
+
+function purgeLegacyStorageKeys(): void {
+  if (typeof window === "undefined" || legacyKeysPurged) return;
+  legacyKeysPurged = true;
+  for (const key of LEGACY_STORAGE_KEYS) {
+    localStorage.removeItem(key);
+  }
+}
 
 export type JudgmentRecord = {
   id: string;
@@ -10,6 +22,10 @@ export type JudgmentRecord = {
   location?: string;
   /** 예: 한식당, 오마카세 전문점 */
   venueType?: string;
+  /** false면 식당 미식별(구 이력은 없으면 true로 간주) */
+  exists?: boolean;
+  /** exists false일 때 안내 문구 */
+  notice?: string;
 };
 
 function isRecord(x: unknown): x is JudgmentRecord {
@@ -27,7 +43,14 @@ function isRecord(x: unknown): x is JudgmentRecord {
   if (o.venueType !== undefined && typeof o.venueType !== "string") {
     return false;
   }
+  if (o.exists !== undefined && typeof o.exists !== "boolean") return false;
+  if (o.notice !== undefined && typeof o.notice !== "string") return false;
   return true;
+}
+
+/** 구 이력 호환: exists 필드 없으면 식당 있는 것으로 본다 */
+export function recordIsFound(r: JudgmentRecord): boolean {
+  return r.exists !== false;
 }
 
 /** 비교용: 앞뒤 공백·연속 공백 정리, 라틴 문자는 소문자 통일 */
@@ -51,6 +74,7 @@ export function findCachedJudgment(searchName: string): JudgmentRecord | null {
 
 export function loadJudgmentHistory(): JudgmentRecord[] {
   if (typeof window === "undefined") return [];
+  purgeLegacyStorageKeys();
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
