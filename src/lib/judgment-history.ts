@@ -157,6 +157,16 @@ export function appendJudgment(record: JudgmentRecord): JudgmentRecord[] {
   return next;
 }
 
+/** id에 해당하는 판독 한 건을 이력에서 제거한다. 반환: 남은 이력(최신순) */
+export function removeJudgmentById(id: string): JudgmentRecord[] {
+  if (typeof window === "undefined") return [];
+  purgeLegacyStorageKeys();
+  const prev = loadJudgmentHistory();
+  const next = prev.filter((r) => r.id !== id);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  return next;
+}
+
 export function newJudgmentId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
     return crypto.randomUUID();

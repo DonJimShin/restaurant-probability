@@ -11,6 +11,7 @@ import {
   loadJudgmentHistory,
   newJudgmentId,
   recordIsFound,
+  removeJudgmentById,
   type JudgmentRecord,
 } from "@/lib/judgment-history";
 
@@ -912,6 +913,18 @@ export default function Home() {
                             결과 공유하기
                           </button>
                         )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setHistory(removeJudgmentById(r.id));
+                            setExpandedHistoryId((cur) =>
+                              cur === r.id ? null : cur,
+                            );
+                          }}
+                          className="mx-auto mt-3 block text-xs font-medium text-slate-500 underline-offset-2 transition hover:text-red-600 hover:underline"
+                        >
+                          이 판독 삭제
+                        </button>
                       </div>
                     )}
                   </li>
